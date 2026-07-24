@@ -2,6 +2,14 @@
 
 export type Role = "user" | "assistant";
 
+export interface ToolCall {
+  id: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  result?: string;
+  status: "executing" | "success" | "error";
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -9,6 +17,8 @@ export interface ChatMessage {
   createdAt: number;
   /** Optional intermediate "thinking" steps the agent took. */
   reasoning?: string[];
+  /** Optional tool execution trace for agentic actions. */
+  toolsUsed?: ToolCall[];
 }
 
 export interface Conversation {
