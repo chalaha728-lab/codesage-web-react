@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { ChatMessage as ChatMessageType } from "../types";
 
 interface Props {
@@ -9,8 +10,8 @@ interface Props {
 }
 
 /** Render markdown-ish bold (**text**) as <strong> without dangerouslySetInnerHTML. */
-function renderInline(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
+function renderInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
   const regex = /\*\*([^*]+)\*\*/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
