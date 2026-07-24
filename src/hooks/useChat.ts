@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentSettings, ChatMessage, Conversation } from "../types";
+import type { AgentSettings, ChatMessage, Conversation, ToolCall } from "../types";
 import { runAgent, titleFromMessage } from "../agent";
 import { loadSettings, saveSettings } from "../storage";
 
@@ -84,7 +84,7 @@ export function useChat() {
 
   /** Stream an assistant message token-by-token to simulate live generation. */
   const streamAssistant = useCallback(
-    async (convId: string, fullText: string, reasoning: string[]) => {
+    async (convId: string, fullText: string, reasoning: string[], toolsUsed?: ToolCall[]) => {
       const msgId = uid();
       const baseMsg: ChatMessage = {
         id: msgId,
@@ -92,6 +92,7 @@ export function useChat() {
         content: "",
         createdAt: Date.now(),
         reasoning,
+        toolsUsed,
       };
       patchConversation(convId, (c) => ({
         ...c,
@@ -114,7 +115,7 @@ export function useChat() {
         }));
         // delay between tokens; small jitter feels natural
         await new Promise<void>((resolve) => {
-          streamTimer.current = window.setTimeout(resolve, 14 + Math.random() * 20);
+          streamTimer.current = window.setTimeout(resolve, 12 + Math.random() * 18);
         });
       }
 
@@ -156,8 +157,8 @@ export function useChat() {
         updatedAt: Date.now(),
       }));
 
-      const { content, reasoning } = await runAgent(updatedMsgs, settings);
-      await streamAssistant(convId, content, reasoning);
+      const { content, reasoning, toolsUsed } = await runAgent(updatedMsgs, settings);
+      await streamAssistant(convId, content, reasoning, toolsUsed);
     },
     [activeId, conversations, newConversation, patchConversation, settings, streamAssistant]
   );
@@ -182,8 +183,8 @@ export function useChat() {
       updatedAt: Date.now(),
     }));
 
-    const { content, reasoning } = await runAgent(msgsForAgent, settings);
-    await streamAssistant(active.id, content, reasoning);
+    const { content, reasoning, toolsUsed } = await runAgent(msgsForAgent, settings);
+    await streamAssistant(active.id, content, reasoning, toolsUsed);
   }, [active, patchConversation, settings, streamAssistant]);
 
   const stop = useCallback(() => {
