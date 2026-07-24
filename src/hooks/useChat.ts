@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessage, Conversation } from "../types";
+import type { AgentSettings, ChatMessage, Conversation } from "../types";
 import { runAgent, titleFromMessage } from "../agent";
+import { loadSettings, saveSettings } from "../storage";
 
 const STORAGE_KEY = "codesage.conversations.v1";
 
@@ -24,6 +25,7 @@ export function useChat() {
   const [conversations, setConversations] = useState<Conversation[]>(() => load());
   const [activeId, setActiveId] = useState<string | null>(() => load()[0]?.id ?? null);
   const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AgentSettings>(() => loadSettings());
   const stopRef = useRef(false);
   const streamTimer = useRef<number | null>(null);
 
@@ -35,6 +37,12 @@ export function useChat() {
       /* storage full / unavailable */
     }
   }, [conversations]);
+
+  // Persist settings
+  const updateSettings = useCallback((newSettings: AgentSettings) => {
+    setSettings(newSettings);
+    saveSettings(newSettings);
+  }, []);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
 
@@ -106,7 +114,7 @@ export function useChat() {
         }));
         // delay between tokens; small jitter feels natural
         await new Promise<void>((resolve) => {
-          streamTimer.current = window.setTimeout(resolve, 18 + Math.random() * 24);
+          streamTimer.current = window.setTimeout(resolve, 14 + Math.random() * 20);
         });
       }
 
@@ -135,29 +143,28 @@ export function useChat() {
         createdAt: Date.now(),
       };
 
-      const priorUser = (conversations.find((c) => c.id === convId)?.messages ?? [])
-        .filter((m) => m.role === "user")
-        .map((m) => m.content);
+      const currentConv = conversations.find((c) => c.id === convId);
+      const existingMsgs = currentConv?.messages ?? [];
+      const isFirst = existingMsgs.length === 0;
 
-      const isFirst = (conversations.find((c) => c.id === convId)?.messages.length ?? 0) === 0;
+      const updatedMsgs = [...existingMsgs, userMsg];
 
       patchConversation(convId, (c) => ({
         ...c,
         title: isFirst ? titleFromMessage(text) : c.title,
-        messages: [...c.messages, userMsg],
+        messages: updatedMsgs,
         updatedAt: Date.now(),
       }));
 
-      const { content, reasoning } = runAgent(text, priorUser);
+      const { content, reasoning } = await runAgent(updatedMsgs, settings);
       await streamAssistant(convId, content, reasoning);
     },
-    [activeId, conversations, newConversation, patchConversation, streamAssistant]
+    [activeId, conversations, newConversation, patchConversation, settings, streamAssistant]
   );
 
   const regenerate = useCallback(async () => {
     if (!active) return;
     const msgs = active.messages;
-    // find last user message
     let lastUserIdx = -1;
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === "user") {
@@ -166,23 +173,18 @@ export function useChat() {
       }
     }
     if (lastUserIdx === -1) return;
-    const lastUserText = msgs[lastUserIdx].content;
 
-    // drop everything after the last user message
+    const msgsForAgent = msgs.slice(0, lastUserIdx + 1);
+
     patchConversation(active.id, (c) => ({
       ...c,
-      messages: c.messages.slice(0, lastUserIdx + 1),
+      messages: msgsForAgent,
       updatedAt: Date.now(),
     }));
 
-    const priorUser = msgs
-      .slice(0, lastUserIdx)
-      .filter((m) => m.role === "user")
-      .map((m) => m.content);
-
-    const { content, reasoning } = runAgent(lastUserText, priorUser);
+    const { content, reasoning } = await runAgent(msgsForAgent, settings);
     await streamAssistant(active.id, content, reasoning);
-  }, [active, patchConversation, streamAssistant]);
+  }, [active, patchConversation, settings, streamAssistant]);
 
   const stop = useCallback(() => {
     stopRef.current = true;
@@ -196,6 +198,8 @@ export function useChat() {
     activeId,
     streamingId,
     isStreaming: streamingId !== null,
+    settings,
+    updateSettings,
     selectConversation: setActiveId,
     newConversation,
     deleteConversation,
