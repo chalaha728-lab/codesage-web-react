@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ChatInput from "./components/ChatInput";
+import SettingsModal from "./components/SettingsModal";
 import { useChat } from "./hooks/useChat";
 
 const SUGGESTIONS: string[] = [
@@ -20,6 +21,8 @@ export default function App() {
     activeId,
     streamingId,
     isStreaming,
+    settings,
+    updateSettings,
     selectConversation,
     newConversation,
     deleteConversation,
@@ -30,6 +33,7 @@ export default function App() {
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when messages change.
@@ -73,16 +77,32 @@ export default function App() {
           <div className="header-title">
             <span className="header-mark">✦</span>
             <h1>{active?.title ?? "CodeSage"}</h1>
+            {settings.useRemote && (
+              <span className="mode-badge" title={`Connected to ${settings.provider}`}>
+                LIVE: {settings.model || settings.provider}
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => newConversation()}
-            aria-label="New chat"
-            title="New chat"
-          >
-            ✎
-          </button>
+          <div className="header-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+              title="Agent Settings"
+            >
+              ⚙️
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => newConversation()}
+              aria-label="New chat"
+              title="New chat"
+            >
+              ✎
+            </button>
+          </div>
         </header>
 
         <div className="messages" ref={scrollRef}>
@@ -91,7 +111,12 @@ export default function App() {
               <div className="welcome-logo">✦</div>
               <h2>CodeSage</h2>
               <p className="welcome-sub">
-                A transparent, in-browser AI agent. Ask me anything — I'll show my reasoning.
+                A transparent, in-browser AI agent.
+                {settings.useRemote ? (
+                  <span className="status-highlight"> Connected to {settings.provider} ({settings.model}).</span>
+                ) : (
+                  <span> Running on built-in skills. Configure a live LLM in Settings ⚙️.</span>
+                )}
               </p>
               <div className="welcome-grid">
                 {SUGGESTIONS.map((s) => (
@@ -127,6 +152,13 @@ export default function App() {
           suggestions={active && active.messages.length === 0 ? SUGGESTIONS : []}
         />
       </main>
+
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={settings}
+        onSave={updateSettings}
+      />
     </div>
   );
 }
