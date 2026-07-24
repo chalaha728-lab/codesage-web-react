@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 
 interface Props {
   onSend: (text: string) => void;
@@ -26,7 +27,7 @@ export default function ChatInput({ onSend, onStop, busy, suggestions = [] }: Pr
     setValue("");
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
