@@ -268,6 +268,9 @@ export async function runAgentLocal(input: string, priorUserMessages: string[] =
   if (toolCheck.handled) return toolCheck.result;
 
   const reasoning: string[] = [`[Local Engine] Evaluated non-tool skills.`];
+  if (priorUserMessages.length > 0) {
+    reasoning.push(`Context tracking: ${priorUserMessages.length} prior message(s).`);
+  }
 
   const math = tryArithmetic(trimmed);
   if (math !== null) {
