@@ -1,12 +1,9 @@
 // The CodeSage agent reasoning engine.
 //
-// This is a fully self-contained, deterministic agent (no external API/keys
-// required) so the app works as a live demo. It routes a user's message
-// through a set of skills: arithmetic, unit conversion, date/time, jokes,
-// definitions, and a conversational fallback. Each step records a short
-// "reasoning" trace that the UI can surface as transparent thinking.
+// Supports both a local deterministic skill engine (arithmetic, unit conversion,
+// date/time, jokes, definitions) and an optional remote OpenAI-compatible LLM endpoint.
 
-import type { AgentSkill } from "./types";
+import type { AgentSettings, AgentSkill, ChatMessage } from "./types";
 
 export interface AgentResult {
   content: string;
@@ -64,9 +61,6 @@ function findUnit(name: string): ConvertFactor | undefined {
   return UNITS.find((u) => u.aliases.includes(n));
 }
 
-// A small, safe arithmetic evaluator using the Function constructor on a
-// restricted character set. We reject anything that isn't digits, operators,
-// parentheses, decimal points and spaces. This keeps arbitrary code out.
 function tryArithmetic(input: string): number | null {
   const expr = input.replace(/[^0-9+\-*/().\s]/g, "").trim();
   if (!expr || !/[+\-*/]/.test(expr)) return null;
@@ -164,13 +158,13 @@ function capitalize(s: string): string {
 function tryConversation(input: string, history: string[]): string | null {
   const lower = input.toLowerCase().trim();
   if (/\b(hi|hello|hey|yo|howdy)\b/.test(lower) && lower.length <= 12) {
-    return "Hello! I'm CodeSage, your in-browser AI agent. Ask me to do math, convert units, check the date, tell a joke, or just chat.";
+    return "Hello! I'm CodeSage, your in-browser AI agent. Ask me to do math, convert units, check the date, tell a joke, or configure a real LLM in Settings.";
   }
   if (lower.includes("how are you")) {
     return "I'm running at full clock — all systems nominal! How can I help you today?";
   }
   if (/\b(who are you|what are you)\b/.test(lower)) {
-    return "I'm CodeSage — a transparent, offline AI agent demo built with React. I show my reasoning steps so you can see how I think.";
+    return "I'm CodeSage — a transparent AI agent built with React. You can use my built-in skills or connect an LLM API in Settings.";
   }
   if (/\b(thanks|thank you|thx)\b/.test(lower)) {
     return "You're welcome! Anything else I can help with?";
@@ -181,7 +175,6 @@ function tryConversation(input: string, history: string[]): string | null {
   if (/\b(bye|goodbye|see you|see ya)\b/.test(lower)) {
     return "Goodbye! Come back anytime.";
   }
-  // Reference earlier conversation context.
   if (history.length > 0) {
     const lastUser = history.filter((h) => h).slice(-1)[0] ?? "";
     if (lower.includes("that") || lower.includes("it") || lower.includes("this")) {
@@ -189,83 +182,148 @@ function tryConversation(input: string, history: string[]): string | null {
     }
   }
   if (lower.includes("help") || lower.includes("what can you do")) {
-    return "I can: do math (e.g. '12 * (3 + 4)'), convert units (e.g. '5 km to miles'), handle temperature ('100 c to f'), tell you the date/time, count days until a date, tell a joke, define coding terms, and chat. Try one!";
+    return "I can: do math (e.g. '12 * (3 + 4)'), convert units ('5 km to miles'), handle temperature ('100 c to f'), tell you the date/time, count days until a date, tell a joke, define coding terms, or connect to a real LLM API (OpenAI/Groq/Ollama/OpenRouter).";
   }
   return null;
 }
 
 const FALLBACKS: string[] = [
-  "That's an interesting one. Could you rephrase or give me more detail so I can help precisely?",
-  "I'm not totally sure I caught that. I'm best at math, conversions, time, jokes and definitions — want to try one of those?",
-  "Hmm, I don't have a specific skill for that yet, but I'm all ears. What are you trying to accomplish?",
+  "That's an interesting query. I'm operating on local skills. Try a math expression, unit conversion, or configure a real LLM in Settings ⚙️!",
+  "I don't have a local skill for that specific request. You can configure a remote LLM API (OpenAI, Groq, Ollama) in Settings ⚙️ to get full AI answers!",
+  "Hmm, my local skills didn't match that query. Try math, conversions, jokes, or connect your preferred LLM model in Settings ⚙️.",
 ];
 
-/**
- * Run the agent against a single user message.
- * @param input the user's message
- * @param priorUserMessages recent user messages, for context
- */
-export function runAgent(input: string, priorUserMessages: string[] = []): AgentResult {
+export function runAgentLocal(input: string, priorUserMessages: string[] = []): AgentResult {
   const reasoning: string[] = [];
   const trimmed = input.trim();
-  reasoning.push(`Received message (${trimmed.length} chars).`);
+  reasoning.push(`[Local Skill Engine] Processing message (${trimmed.length} chars).`);
 
-  // 1. Math
   const math = tryArithmetic(trimmed);
   if (math !== null) {
-    reasoning.push("Matched the arithmetic skill — evaluated the expression safely.");
+    reasoning.push("Matched math skill — evaluated arithmetic expression.");
     return { content: `That equals **${math}**.`, reasoning };
   }
 
-  // 2. Temperature
   const temp = tryTemperature(trimmed);
   if (temp) {
-    reasoning.push("Matched the temperature conversion skill.");
+    reasoning.push("Matched temperature conversion skill.");
     return { content: temp, reasoning };
   }
 
-  // 3. Unit conversion
   const conv = tryConversion(trimmed);
   if (conv) {
-    reasoning.push("Matched the unit-conversion skill.");
+    reasoning.push("Matched unit conversion skill.");
     return { content: conv, reasoning };
   }
 
-  // 4. Time
   const time = tryTime(trimmed);
   if (time) {
-    reasoning.push("Matched the date/time skill — computed using the system clock.");
+    reasoning.push("Matched date/time skill.");
     return { content: time, reasoning };
   }
 
-  // 5. Joke
   const joke = tryJoke(trimmed);
   if (joke) {
-    reasoning.push("Matched the joke skill — picked a random entry from the set.");
+    reasoning.push("Matched joke skill.");
     return { content: joke, reasoning };
   }
 
-  // 6. Define
   const def = tryDefine(trimmed);
   if (def) {
-    reasoning.push("Matched the define skill — looked up the offline glossary.");
+    reasoning.push("Matched definition glossary skill.");
     return { content: def, reasoning };
   }
 
-  // 7. Conversational
   const chat = tryConversation(trimmed, priorUserMessages);
   if (chat) {
-    reasoning.push("Matched a conversational rule.");
+    reasoning.push("Matched conversational rules.");
     return { content: chat, reasoning };
   }
 
-  reasoning.push("No skill matched — returning a guided fallback.");
+  reasoning.push("No local skill matched — returning guided fallback.");
   return { content: FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)], reasoning };
 }
 
-/**
- * Derive a short title for a conversation from its first user message.
- */
+async function callRemoteLLM(
+  messages: ChatMessage[],
+  settings: AgentSettings
+): Promise<AgentResult> {
+  const reasoning: string[] = [
+    `[Remote LLM] Connecting to ${settings.baseUrl} (model: ${settings.model || "default"})`,
+  ];
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (settings.apiKey) {
+    headers["Authorization"] = `Bearer ${settings.apiKey}`;
+  }
+
+  const body = {
+    model: settings.model || "gpt-4o-mini",
+    messages: messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    })),
+  };
+
+  const endpoint = settings.baseUrl.endsWith("/chat/completions")
+    ? settings.baseUrl
+    : `${settings.baseUrl.replace(/\/$/, "")}/chat/completions`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`API Request failed (${response.status}): ${errorText.slice(0, 150)}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error("Received empty response from LLM API.");
+  }
+
+  reasoning.push(`[Remote LLM] Successfully received response from ${settings.model || "model"}.`);
+  return { content, reasoning };
+}
+
+export async function runAgent(
+  messages: ChatMessage[],
+  settings: AgentSettings
+): Promise<AgentResult> {
+  const lastMsg = messages.filter((m) => m.role === "user").slice(-1)[0];
+  const input = lastMsg?.content ?? "";
+  const priorUserMessages = messages
+    .filter((m) => m.role === "user")
+    .slice(0, -1)
+    .map((m) => m.content);
+
+  if (settings.useRemote && (settings.apiKey || settings.provider === "ollama")) {
+    try {
+      return await callRemoteLLM(messages, settings);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const fallback = runAgentLocal(input, priorUserMessages);
+      return {
+        content: `⚠️ **Remote LLM Call Failed:** ${errorMsg}\n\n*Fell back to local skill engine:*\n\n${fallback.content}`,
+        reasoning: [
+          `[Remote LLM Error] ${errorMsg}`,
+          "Fell back to local skill engine.",
+          ...fallback.reasoning,
+        ],
+      };
+    }
+  }
+
+  return runAgentLocal(input, priorUserMessages);
+}
+
 export function titleFromMessage(message: string): string {
   const clean = message.trim().replace(/\s+/g, " ");
   if (clean.length <= 32) return clean || "New chat";
