@@ -26,3 +26,13 @@ export interface AgentSkill {
   description: string;
   icon: string;
 }
+
+export type ProviderPreset = "openai" | "groq" | "ollama" | "openrouter" | "custom";
+
+export interface AgentSettings {
+  useRemote: boolean;
+  provider: ProviderPreset;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
