@@ -1,22 +1,24 @@
 // The CodeSage agent reasoning engine.
 //
-// Supports both a local deterministic skill engine (arithmetic, unit conversion,
-// date/time, jokes, definitions) and an optional remote OpenAI-compatible LLM endpoint.
+// Supports both a local deterministic skill & agentic tool execution engine
+// and a remote OpenAI-compatible LLM endpoint with Tool Calling (Function Calling) capability.
 
-import type { AgentSettings, AgentSkill, ChatMessage } from "./types";
+import type { AgentSettings, AgentSkill, ChatMessage, ToolCall } from "./types";
+import { AGENT_TOOLS, OPENAI_TOOLS_SCHEMA } from "./tools";
 
 export interface AgentResult {
   content: string;
   reasoning: string[];
+  toolsUsed?: ToolCall[];
 }
 
 export const AGENT_SKILLS: AgentSkill[] = [
+  { id: "eval_js", label: "JS Sandbox", description: "Execute JavaScript code safely", icon: "⚡" },
+  { id: "web_fetch", label: "Web Fetch", description: "Retrieve public HTTP/API content", icon: "🌐" },
+  { id: "memory", label: "Agent Memory", description: "Store & recall persistent context", icon: "🧠" },
   { id: "math", label: "Math", description: "Arithmetic & expressions", icon: "➗" },
   { id: "convert", label: "Convert", description: "Length, weight, temperature", icon: "🔁" },
   { id: "time", label: "Time", description: "Date, time & days until", icon: "🕒" },
-  { id: "joke", label: "Jokes", description: "Tell a programming joke", icon: "😄" },
-  { id: "define", label: "Define", description: "Look up a word", icon: "📖" },
-  { id: "chat", label: "Chat", description: "General conversation", icon: "💬" },
 ];
 
 const JOKES: string[] = [
@@ -30,7 +32,6 @@ const JOKES: string[] = [
 
 interface ConvertFactor {
   aliases: string[];
-  /** factor to convert a unit into a base unit */
   toBase: (v: number) => number;
   fromBase: (v: number) => number;
   base: string;
@@ -138,69 +139,139 @@ function tryDefine(input: string): string | null {
   if (!m) return null;
   const word = m[1];
   const GLOSSARY: Record<string, string> = {
-    agent: "A software component that perceives its environment and takes actions to achieve a goal.",
-    api: "Application Programming Interface — a set of rules allowing software to communicate.",
-    react: "A JavaScript library for building user interfaces using components.",
+    agent: "A software component that perceives its environment and takes autonomous actions to achieve goals.",
+    api: "Application Programming Interface — a set of rules allowing software systems to communicate.",
+    react: "A JavaScript library for building component-based user interfaces.",
     algorithm: "A finite sequence of well-defined instructions to solve a problem.",
-    variable: "A named storage location in a program that holds a value.",
+    variable: "A named storage location in a program holding a mutable or immutable value.",
     recursion: "A technique where a function calls itself to solve smaller sub-problems.",
-    compile: "To translate source code into an executable form a machine can run.",
-    deploy: "To make software available for use, often on servers or app stores.",
   };
   if (word in GLOSSARY) return `${capitalize(word)}: ${GLOSSARY[word]}`;
-  return `I don't have a built-in definition for "${word}" in my offline glossary, but it's a great word to look up!`;
+  return null;
 }
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function tryConversation(input: string, history: string[]): string | null {
-  const lower = input.toLowerCase().trim();
-  if (/\b(hi|hello|hey|yo|howdy)\b/.test(lower) && lower.length <= 12) {
-    return "Hello! I'm CodeSage, your in-browser AI agent. Ask me to do math, convert units, check the date, tell a joke, or configure a real LLM in Settings.";
+// Local Agentic Tool Router (Autonomous decision loop for local execution)
+async function tryLocalToolExecution(input: string): Promise<{ result: AgentResult; handled: boolean }> {
+  const lower = input.toLowerCase();
+  const reasoning: string[] = ["[Local Agentic Loop] Analyzing message for tool execution intents."];
+  const toolsUsed: ToolCall[] = [];
+
+  // Intent 1: Direct JS execution / run request
+  if (lower.startsWith("run js:") || lower.startsWith("eval:") || lower.startsWith("exec:")) {
+    const code = input.replace(/^(run js:|eval:|exec:)/i, "").trim();
+    reasoning.push(`Identified intent: Tool 'evaluate_javascript' on code block.`);
+    const callId = "tool_" + Math.random().toString(36).slice(2, 8);
+    const execResult = await AGENT_TOOLS.evaluate_javascript.execute({ code });
+    toolsUsed.push({
+      id: callId,
+      toolName: "evaluate_javascript",
+      args: { code },
+      result: execResult,
+      status: "success",
+    });
+    reasoning.push(`Executed 'evaluate_javascript' tool successfully.`);
+    return {
+      handled: true,
+      result: {
+        content: `⚡ **Executed JavaScript Tool:**\n\`\`\`\n${execResult}\n\`\`\``,
+        reasoning,
+        toolsUsed,
+      },
+    };
   }
-  if (lower.includes("how are you")) {
-    return "I'm running at full clock — all systems nominal! How can I help you today?";
+
+  // Intent 2: Web fetch intent
+  const fetchMatch = input.match(/\b(?:fetch|get|read)\b\s+(https?:\/\/[^\s]+)/i);
+  if (fetchMatch) {
+    const url = fetchMatch[1];
+    reasoning.push(`Identified intent: Tool 'get_web_page' for URL: ${url}`);
+    const callId = "tool_" + Math.random().toString(36).slice(2, 8);
+    const fetchResult = await AGENT_TOOLS.get_web_page.execute({ url });
+    toolsUsed.push({
+      id: callId,
+      toolName: "get_web_page",
+      args: { url },
+      result: fetchResult,
+      status: "success",
+    });
+    reasoning.push(`Executed 'get_web_page' tool.`);
+    return {
+      handled: true,
+      result: {
+        content: `🌐 **Fetched Content from ${url}:**\n\`\`\`\n${fetchResult}\n\`\`\``,
+        reasoning,
+        toolsUsed,
+      },
+    };
   }
-  if (/\b(who are you|what are you)\b/.test(lower)) {
-    return "I'm CodeSage — a transparent AI agent built with React. You can use my built-in skills or connect an LLM API in Settings.";
+
+  // Intent 3: Memory management intent
+  const memSetMatch = input.match(/\bremember\s+([a-z0-9_-]+)\s+as\s+(.+)/i);
+  if (memSetMatch) {
+    const key = memSetMatch[1];
+    const value = memSetMatch[2];
+    reasoning.push(`Identified intent: Tool 'manage_memory' (action: set, key: ${key})`);
+    const callId = "tool_" + Math.random().toString(36).slice(2, 8);
+    const memResult = await AGENT_TOOLS.manage_memory.execute({ action: "set", key, value });
+    toolsUsed.push({
+      id: callId,
+      toolName: "manage_memory",
+      args: { action: "set", key, value },
+      result: memResult,
+      status: "success",
+    });
+    return {
+      handled: true,
+      result: {
+        content: `🧠 **Agent Memory Updated:**\nSaved \`${key}\` = "${value}".`,
+        reasoning,
+        toolsUsed,
+      },
+    };
   }
-  if (/\b(thanks|thank you|thx)\b/.test(lower)) {
-    return "You're welcome! Anything else I can help with?";
+
+  const memGetMatch = input.match(/\brecall\s+([a-z0-9_-]+)/i);
+  if (memGetMatch) {
+    const key = memGetMatch[1];
+    reasoning.push(`Identified intent: Tool 'manage_memory' (action: get, key: ${key})`);
+    const callId = "tool_" + Math.random().toString(36).slice(2, 8);
+    const memResult = await AGENT_TOOLS.manage_memory.execute({ action: "get", key });
+    toolsUsed.push({
+      id: callId,
+      toolName: "manage_memory",
+      args: { action: "get", key },
+      result: memResult,
+      status: "success",
+    });
+    return {
+      handled: true,
+      result: {
+        content: `🧠 **Agent Memory Retrieval:**\n${memResult}`,
+        reasoning,
+        toolsUsed,
+      },
+    };
   }
-  if (lower.includes("your name")) {
-    return "My name is CodeSage. Nice to meet you!";
-  }
-  if (/\b(bye|goodbye|see you|see ya)\b/.test(lower)) {
-    return "Goodbye! Come back anytime.";
-  }
-  if (history.length > 0) {
-    const lastUser = history.filter((h) => h).slice(-1)[0] ?? "";
-    if (lower.includes("that") || lower.includes("it") || lower.includes("this")) {
-      return `Building on your earlier message ("${lastUser.slice(0, 60)}${lastUser.length > 60 ? "…" : ""}"), I'm tracking the context. What specifically would you like me to do with it?`;
-    }
-  }
-  if (lower.includes("help") || lower.includes("what can you do")) {
-    return "I can: do math (e.g. '12 * (3 + 4)'), convert units ('5 km to miles'), handle temperature ('100 c to f'), tell you the date/time, count days until a date, tell a joke, define coding terms, or connect to a real LLM API (OpenAI/Groq/Ollama/OpenRouter).";
-  }
-  return null;
+
+  return { handled: false, result: { content: "", reasoning: [] } };
 }
 
-const FALLBACKS: string[] = [
-  "That's an interesting query. I'm operating on local skills. Try a math expression, unit conversion, or configure a real LLM in Settings ⚙️!",
-  "I don't have a local skill for that specific request. You can configure a remote LLM API (OpenAI, Groq, Ollama) in Settings ⚙️ to get full AI answers!",
-  "Hmm, my local skills didn't match that query. Try math, conversions, jokes, or connect your preferred LLM model in Settings ⚙️.",
-];
-
-export function runAgentLocal(input: string, priorUserMessages: string[] = []): AgentResult {
-  const reasoning: string[] = [];
+export async function runAgentLocal(input: string, priorUserMessages: string[] = []): Promise<AgentResult> {
   const trimmed = input.trim();
-  reasoning.push(`[Local Skill Engine] Processing message (${trimmed.length} chars).`);
+
+  // Try Agentic Tool Intent routing first
+  const toolCheck = await tryLocalToolExecution(trimmed);
+  if (toolCheck.handled) return toolCheck.result;
+
+  const reasoning: string[] = [`[Local Engine] Evaluated non-tool skills.`];
 
   const math = tryArithmetic(trimmed);
   if (math !== null) {
-    reasoning.push("Matched math skill — evaluated arithmetic expression.");
+    reasoning.push("Matched math skill — evaluated arithmetic.");
     return { content: `That equals **${math}**.`, reasoning };
   }
 
@@ -234,14 +305,15 @@ export function runAgentLocal(input: string, priorUserMessages: string[] = []): 
     return { content: def, reasoning };
   }
 
-  const chat = tryConversation(trimmed, priorUserMessages);
-  if (chat) {
-    reasoning.push("Matched conversational rules.");
-    return { content: chat, reasoning };
-  }
-
-  reasoning.push("No local skill matched — returning guided fallback.");
-  return { content: FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)], reasoning };
+  reasoning.push("Returning default agentic guidance.");
+  return {
+    content: `I'm CodeSage agent! You can run JavaScript, fetch URLs, or store memory using my agentic tools:\n\n` +
+      `- **JS Execution:** \`run js: [1,2,3].map(x => x * 2)\`\n` +
+      `- **Web Fetch:** \`fetch https://api.github.com\`\n` +
+      `- **Memory:** \`remember user_role as Developer\` or \`recall user_role\`\n` +
+      `- **Math & Conversions:** \`18 * (7 + 4)\` or \`5 km to miles\``,
+    reasoning,
+  };
 }
 
 async function callRemoteLLM(
@@ -249,48 +321,111 @@ async function callRemoteLLM(
   settings: AgentSettings
 ): Promise<AgentResult> {
   const reasoning: string[] = [
-    `[Remote LLM] Connecting to ${settings.baseUrl} (model: ${settings.model || "default"})`,
+    `[Remote LLM] Connecting to ${settings.baseUrl} with Tool Schema enabled.`,
   ];
+  const toolsUsed: ToolCall[] = [];
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (settings.apiKey) {
-    headers["Authorization"] = `Bearer ${settings.apiKey}`;
-  }
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (settings.apiKey) headers["Authorization"] = `Bearer ${settings.apiKey}`;
 
-  const body = {
-    model: settings.model || "gpt-4o-mini",
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
-  };
+  const formattedMessages: Array<Record<string, unknown>> = [
+    {
+      role: "system",
+      content:
+        "You are CodeSage, an autonomous AI agent equipped with function-calling tools. " +
+        "You can evaluate JavaScript, fetch URLs, and manage browser memory to fulfill requests.",
+    },
+    ...messages.map((m) => ({ role: m.role, content: m.content })),
+  ];
 
   const endpoint = settings.baseUrl.endsWith("/chat/completions")
     ? settings.baseUrl
     : `${settings.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
-  const response = await fetch(endpoint, {
+  // Step 1: Request with tools enabled
+  const initialRes = await fetch(endpoint, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: settings.model || "gpt-4o-mini",
+      messages: formattedMessages,
+      tools: OPENAI_TOOLS_SCHEMA,
+      tool_choice: "auto",
+    }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`API Request failed (${response.status}): ${errorText.slice(0, 150)}`);
+  if (!initialRes.ok) {
+    const text = await initialRes.text().catch(() => "");
+    throw new Error(`API Request failed (${initialRes.status}): ${text.slice(0, 150)}`);
   }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+  const initialData = await initialRes.json();
+  const choice = initialData?.choices?.[0];
+  const responseMessage = choice?.message;
 
-  if (!content) {
-    throw new Error("Received empty response from LLM API.");
+  // Step 2: Handle Tool Calls if returned by the LLM
+  if (responseMessage?.tool_calls && Array.isArray(responseMessage.tool_calls)) {
+    reasoning.push(`[Remote LLM] Model decided to execute ${responseMessage.tool_calls.length} tool call(s).`);
+    formattedMessages.push(responseMessage);
+
+    for (const toolCall of responseMessage.tool_calls) {
+      const toolName = toolCall.function.name;
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments || "{}");
+      } catch {
+        args = {};
+      }
+
+      reasoning.push(`Executing Tool: '${toolName}' with arguments: ${JSON.stringify(args)}`);
+
+      let resultText = "";
+      if (AGENT_TOOLS[toolName]) {
+        resultText = await AGENT_TOOLS[toolName].execute(args);
+      } else {
+        resultText = `Error: Tool '${toolName}' not found in registry.`;
+      }
+
+      toolsUsed.push({
+        id: toolCall.id || Math.random().toString(),
+        toolName,
+        args,
+        result: resultText,
+        status: "success",
+      });
+
+      formattedMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        name: toolName,
+        content: resultText,
+      });
+    }
+
+    // Step 3: Send tool execution results back to LLM for final answer
+    reasoning.push(`[Remote LLM] Sending tool outputs back to LLM for synthesis.`);
+    const finalRes = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: settings.model || "gpt-4o-mini",
+        messages: formattedMessages,
+      }),
+    });
+
+    if (finalRes.ok) {
+      const finalData = await finalRes.json();
+      const finalContent = finalData?.choices?.[0]?.message?.content;
+      if (finalContent) {
+        return { content: finalContent, reasoning, toolsUsed };
+      }
+    }
   }
 
-  reasoning.push(`[Remote LLM] Successfully received response from ${settings.model || "model"}.`);
-  return { content, reasoning };
+  const content = responseMessage?.content;
+  if (!content) throw new Error("Received empty response from LLM API.");
+
+  return { content, reasoning, toolsUsed };
 }
 
 export async function runAgent(
@@ -309,19 +444,20 @@ export async function runAgent(
       return await callRemoteLLM(messages, settings);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const fallback = runAgentLocal(input, priorUserMessages);
+      const fallback = await runAgentLocal(input, priorUserMessages);
       return {
-        content: `⚠️ **Remote LLM Call Failed:** ${errorMsg}\n\n*Fell back to local skill engine:*\n\n${fallback.content}`,
+        content: `⚠️ **Remote Agentic Call Failed:** ${errorMsg}\n\n*Fell back to local agentic engine:*\n\n${fallback.content}`,
         reasoning: [
           `[Remote LLM Error] ${errorMsg}`,
-          "Fell back to local skill engine.",
+          "Fell back to local agentic engine.",
           ...fallback.reasoning,
         ],
+        toolsUsed: fallback.toolsUsed,
       };
     }
   }
 
-  return runAgentLocal(input, priorUserMessages);
+  return await runAgentLocal(input, priorUserMessages);
 }
 
 export function titleFromMessage(message: string): string {
