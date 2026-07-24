@@ -292,6 +292,98 @@ button { font-family: inherit; }
 }
 .msg-assistant .msg-content { padding-top: 2px; }
 
+.inline-code {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #ff9e3b;
+}
+
+.code-block {
+  background: #12141c;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: monospace;
+  font-size: 13px;
+  margin: 8px 0;
+  color: #a9b1d6;
+}
+
+/* ── Tools Badge & Cards ───────────────────────────────────── */
+.tools-badge-container {
+  margin: 6px 0 10px;
+}
+.tools-toggle-btn {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tools-toggle-btn:hover { background: var(--bg-soft); }
+
+.tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tool-card {
+  background: #11131a;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.tool-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.tool-name { color: var(--text); }
+.tool-status { color: var(--ok); font-size: 11px; }
+
+.tool-args {
+  background: var(--bg-elev);
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: var(--text-dim);
+  margin: 4px 0;
+  overflow-x: auto;
+}
+
+.tool-result {
+  margin-top: 6px;
+}
+.tool-result small {
+  color: var(--text-mute);
+  font-weight: 600;
+}
+.tool-result pre {
+  background: #090a0e;
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: #7aa2f7;
+  white-space: pre-wrap;
+  margin: 4px 0 0;
+}
+
 .cursor { animation: blink 1s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
 
